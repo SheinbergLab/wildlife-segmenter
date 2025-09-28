@@ -39,8 +39,19 @@ dev = [
     "types-requests>=2.25.0",
 ]
 analysis = [
-    "torch>=1.9.0",
-    "torchvision>=0.10.0", 
+    "numpy>=1.21.0,<2.0.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0", 
+    "ftfy>=6.0.0",
+    "regex>=2021.0.0",
+    "tqdm>=4.0.0",
+    "Pillow>=8.0.0",
+    "opencv-python>=4.5.0",
+]
+analysis-cuda118 = [
+    "numpy>=1.21.0,<2.0.0",
+    "torch>=2.0.0; extra == 'cu118'",
+    "torchvision>=0.15.0; extra == 'cu118'", 
     "ftfy>=6.0.0",
     "regex>=2021.0.0",
     "tqdm>=4.0.0",
@@ -69,8 +80,9 @@ dev = [
     "types-requests>=2.25.0",
 ]
 analysis = [
-    "torch>=1.9.0",
-    "torchvision>=0.10.0", 
+    "numpy>=1.21.0,<2.0.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0", 
     "ftfy>=6.0.0",
     "regex>=2021.0.0",
     "tqdm>=4.0.0",
