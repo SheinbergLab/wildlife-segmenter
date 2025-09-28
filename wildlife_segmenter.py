@@ -18,15 +18,36 @@ from urllib.parse import urljoin
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 
-# Optional imports for analysis
+# Core imports
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import sqlite3
+from pathlib import Path
+from typing import List, Dict, Optional
+import requests
+from urllib.parse import urljoin
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+
+# Optional imports for analysis - import at module level
+CLIP_AVAILABLE = False
+torch = None
+transforms = None
+Image = None
+cv2 = None
+
 try:
     import torch
     import torchvision.transforms as transforms
     from PIL import Image
     import cv2
-    import urllib.request
     CLIP_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    logging.getLogger(__name__).debug(f"Analysis dependencies not available: {e}")
     CLIP_AVAILABLE = False
 
 # Setup logging
