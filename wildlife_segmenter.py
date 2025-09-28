@@ -68,25 +68,57 @@ class WildlifeDownloader:
         # Initialize CLIP model if analysis is enabled
         self.clip_model = None
         self.clip_preprocess = None
-        if self.enable_analysis and CLIP_AVAILABLE:
-            self._init_clip_model()
-        elif self.enable_analysis and not CLIP_AVAILABLE:
-            logger.warning("Analysis requested but CLIP dependencies not available or have compatibility issues")
-            logger.warning("NumPy version conflict detected - try: pip install 'numpy<2.0'")
-            logger.info("Falling back to basic heuristic analysis...")
-            # Enable a simple fallback analysis
-            self.enable_analysis = True
-            self.analysis_method = "basic"
+        if self.enable_analysis:
+            if CLIP_AVAILABLE:
+                self._init_clip_model()
+            else:
+                logger.warning("Analysis requested but some dependencies not available")
+                logger.warning("Checking individual imports...")
+                
+                # Check each import individually
+                missing_deps = []
+                try:
+                    import torch
+                    logger.info(f"✓ PyTorch {torch.__version__} available")
+                except ImportError:
+                    missing_deps.append("torch")
+                    
+                try:
+                    import cv2
+                    logger.info("✓ OpenCV available")
+                except ImportError:
+                    missing_deps.append("opencv-python")
+                    
+                try:
+                    from PIL import Image
+                    logger.info("✓ PIL available")
+                except ImportError:
+                    missing_deps.append("pillow")
+                    
+                try:
+                    import numpy as np
+                    logger.info(f"✓ NumPy {np.__version__} available")
+                except ImportError:
+                    missing_deps.append("numpy")
+                
+                if missing_deps:
+                    logger.error(f"Missing dependencies: {missing_deps}")
+                    logger.error("Install with: uv sync --group analysis")
+                    self.enable_analysis = False
+                else:
+                    logger.info("All dependencies available - proceeding with analysis")
+                    # Force enable and try to load model
+                    try:
+                        self._init_clip_model()
+                    except Exception as e:
+                        logger.error(f"Failed to initialize model: {e}")
+                        self.enable_analysis = False
             
         self._init_database()
         
         if self.enable_analysis:
             gpu_info = f"{self.num_gpus}x GPU" if self.num_gpus > 1 else "1x GPU" if self.num_gpus == 1 else "CPU"
             logger.info(f"Analysis enabled: {gpu_info}, method={self.analysis_method}, batch_size={self.batch_size}, workers={self.workers}")
-            if not CLIP_AVAILABLE:
-                logger.error("Analysis enabled but required dependencies not available!")
-                logger.error("Install with: uv sync --group analysis")
-                self.enable_analysis = False
         else:
             logger.info("Analysis disabled")
         
