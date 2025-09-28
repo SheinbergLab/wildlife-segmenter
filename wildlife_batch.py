@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-import time
+import subprocess
 
 # Import the main WildlifeDownloader class
 from wildlife_segmenter import WildlifeDownloader
@@ -34,12 +34,13 @@ class WildlifeBatchProcessor:
     
     def __init__(self, output_dir: str = "wildlife_clips", parallel_jobs: int = 2,
                  clip_duration: int = 30, enable_analysis: bool = True,
-                 package_results: bool = True):
+                 package_results: bool = True, min_video_duration: float = 0):
         self.output_dir = Path(output_dir)
         self.parallel_jobs = parallel_jobs
         self.clip_duration = clip_duration
         self.enable_analysis = enable_analysis
         self.package_results = package_results
+        self.min_video_duration = min_video_duration  # in minutes
         
         # Setup directories
         self.log_dir = self.output_dir / "batch_logs"
@@ -115,7 +116,48 @@ class WildlifeBatchProcessor:
         logger.info(f"Total unique items found: {len(unique_items)}")
         return unique_items
     
-    def explore_item(self, item_id: str) -> Dict:
+    def get_video_duration(self, download_url: str) -> float:
+        """Get video duration without downloading the full file"""
+        try:
+            # Use ffprobe on the remote URL to get duration
+            cmd = [
+                'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+                '-of', 'csv=p=0', download_url
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+            else:
+                # Fallback: estimate from file size (very rough)
+                # Assume ~1MB per minute for compressed wildlife documentaries
+                return 0.0
+                
+        except Exception as e:
+            logger.debug(f"Could not get duration for {download_url}: {e}")
+            return 0.0
+
+    def filter_videos_by_duration(self, video_files: List[Dict], min_duration_minutes: float = 40) -> List[Dict]:
+        """Filter video files by minimum duration"""
+        if min_duration_minutes <= 0:
+            return video_files
+        
+        logger.info(f"Filtering videos by minimum duration: {min_duration_minutes} minutes")
+        
+        filtered_videos = []
+        for video_file in video_files:
+            duration_seconds = self.get_video_duration(video_file['download_url'])
+            duration_minutes = duration_seconds / 60.0
+            
+            if duration_minutes >= min_duration_minutes:
+                video_file['duration_minutes'] = duration_minutes
+                filtered_videos.append(video_file)
+                logger.info(f"✓ {video_file['name']}: {duration_minutes:.1f} minutes")
+            else:
+                logger.info(f"✗ {video_file['name']}: {duration_minutes:.1f} minutes (too short)")
+        
+        logger.info(f"Filtered {len(video_files)} videos down to {len(filtered_videos)} videos ≥{min_duration_minutes}min")
+        return filtered_videos
         """Explore a specific item to see its contents"""
         logger.info(f"Exploring item: {item_id}")
         
@@ -189,24 +231,48 @@ class WildlifeBatchProcessor:
             
             item_logger.info(f"Found {len(video_files)} video files")
             
-            # Process the documentary
-            self.downloader.process_documentary(
-                item_id=item_id,
-                download=True,
-                segment=True,
-                parallel=True,
-                clip_duration=self.clip_duration,
-                specific_file=None
-            )
+            # Filter by duration if specified
+            if self.min_video_duration > 0:
+                video_files = self.filter_videos_by_duration(video_files, self.min_video_duration)
+                if not video_files:
+                    raise Exception(f"No videos ≥{self.min_video_duration} minutes found")
+                item_logger.info(f"After duration filtering: {len(video_files)} videos")
+            
+            # Process each qualifying video
+            total_clips = 0
+            for video_file in video_files:
+                try:
+                    item_logger.info(f"Processing video: {video_file['name']}")
+                    
+                    # Process individual video instead of using process_documentary
+                    # which only processes the first/largest file
+                    success = self.downloader.download_video(video_file['download_url'], video_file['name'])
+                    if not success:
+                        continue
+                    
+                    video_path = self.output_dir / "downloads" / video_file['name']
+                    if video_path.exists():
+                        clips = self.downloader.segment_video(video_path, clip_duration=self.clip_duration, parallel=True)
+                        if clips:
+                            self.downloader.create_metadata_file(clips, video_file['name'], self.clip_duration, item_id)
+                            total_clips += len(clips)
+                            item_logger.info(f"Created {len(clips)} clips from {video_file['name']}")
+                    
+                except Exception as e:
+                    item_logger.warning(f"Failed to process {video_file['name']}: {e}")
+                    continue
             
             # Count created clips
             clips_dir = self.output_dir / "clips"
-            item_clips = []
+            total_clips = 0
             for video_dir in clips_dir.iterdir():
-                if video_dir.is_dir() and item_id.lower() in video_dir.name.lower():
-                    item_clips.extend(list(video_dir.glob("*.mp4")))
+                if video_dir.is_dir():
+                    # Check if this directory might be from our current processing
+                    item_clips = list(video_dir.glob("*.mp4"))
+                    # Simple heuristic: assume recent clips are from this processing
+                    total_clips += len(item_clips)
             
-            stats['clips_created'] = len(item_clips)
+            stats['clips_created'] = total_clips
             stats['processing_time'] = time.time() - start_time
             stats['success'] = True
             
@@ -579,6 +645,8 @@ Examples:
     parser.add_argument('items', nargs='*', help='Documentary item IDs to process')
     parser.add_argument('-d', '--duration', type=int, default=30, 
                        help='Clip duration in seconds (default: 30)')
+    parser.add_argument('--min-duration', type=float, default=0,
+                       help='Minimum video duration in minutes (default: 0, no filtering)')
     parser.add_argument('-o', '--output', default='wildlife_clips',
                        help='Output directory (default: wildlife_clips)')
     parser.add_argument('-j', '--jobs', type=int, default=2,
@@ -602,7 +670,8 @@ Examples:
         parallel_jobs=args.jobs,
         clip_duration=args.duration,
         enable_analysis=not args.no_analyze,
-        package_results=not args.no_package
+        package_results=not args.no_package,
+        min_video_duration=args.min_duration
     )
     
     try:
