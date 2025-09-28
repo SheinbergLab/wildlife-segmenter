@@ -445,7 +445,7 @@ class WildlifeDownloader:
             try:
                 if self.show_progress:
                     progress = ((i + 1) / len(clips)) * 100
-                    print(f"\rAnalyzing: {progress:.1f%} ({i+1}/{len(clips)})", end='', flush=True)
+                    print(f"\rAnalyzing: {progress:.1f}% ({i+1}/{len(clips)})", end='', flush=True)
                 
                 results = self._analyze_clip_content(clip_path)
                 if results:
