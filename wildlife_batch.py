@@ -9,7 +9,7 @@ import os
 import sys
 import json
 import argparse
-import loggingimport
+import logging
 import sqlite3
 import tarfile
 import shutil
@@ -158,7 +158,7 @@ class WildlifeBatchProcessor:
         
         logger.info(f"Filtered {len(video_files)} videos down to {len(filtered_videos)} videos ≥{min_duration_minutes}min")
         return filtered_videos
-        
+
     def explore_item(self, item_id: str) -> Dict:    
         """Explore a specific item to see its contents"""
         logger.info(f"Exploring item: {item_id}")
@@ -264,7 +264,7 @@ class WildlifeBatchProcessor:
                     item_logger.warning(f"Failed to process {video_file['name']}: {e}")
                     continue
             
-            # Count created clips            
+            # Count created clips
             stats['clips_created'] = total_clips
             stats['processing_time'] = time.time() - start_time
             stats['success'] = True
