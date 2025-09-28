@@ -34,15 +34,36 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class WildlifeDownloader:
-    def __init__(self, output_dir: str = "wildlife_clips", enable_analysis: bool = False, analysis_method: str = "clip", batch_size: int = 0, workers: int = 0):
+    def __init__(self, output_dir: str = "wildlife_clips", enable_analysis: bool = False, analysis_method: str = "clip", batch_size: int = 0, workers: int = 0, show_progress: bool = True):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.base_url = "https://archive.org"
         self.db_path = self.output_dir / "clips_database.db"
         self.enable_analysis = enable_analysis
         self.analysis_method = analysis_method
-        self.batch_size = batch_size if batch_size > 0 else (16 if enable_analysis else 4)
-        self.workers = workers if workers > 0 else (min(mp.cpu_count(), 8) if enable_analysis else mp.cpu_count())
+        self.show_progress = show_progress
+        
+        # Auto-detect GPU capabilities and scale accordingly
+        self.num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        
+        # Aggressive scaling for A6000 class GPUs (48GB each)
+        if self.num_gpus >= 4:
+            # 4x A6000s - can handle massive batches
+            self.batch_size = batch_size if batch_size > 0 else 128
+            self.workers = workers if workers > 0 else min(32, mp.cpu_count())
+            logger.info(f"Multi-GPU setup detected: {self.num_gpus} GPUs - using aggressive batching")
+        elif self.num_gpus >= 2:
+            # 2+ GPUs
+            self.batch_size = batch_size if batch_size > 0 else 64
+            self.workers = workers if workers > 0 else min(16, mp.cpu_count())
+        elif self.num_gpus == 1:
+            # Single GPU - moderate batching
+            self.batch_size = batch_size if batch_size > 0 else 32
+            self.workers = workers if workers > 0 else min(8, mp.cpu_count())
+        else:
+            # CPU only
+            self.batch_size = batch_size if batch_size > 0 else 4
+            self.workers = workers if workers > 0 else mp.cpu_count()
         
         # Initialize CLIP model if analysis is enabled
         self.clip_model = None
@@ -50,13 +71,22 @@ class WildlifeDownloader:
         if self.enable_analysis and CLIP_AVAILABLE:
             self._init_clip_model()
         elif self.enable_analysis and not CLIP_AVAILABLE:
-            logger.warning("Analysis requested but CLIP dependencies not available. Install with: uv sync --group analysis")
-            self.enable_analysis = False
+            logger.warning("Analysis requested but CLIP dependencies not available or have compatibility issues")
+            logger.warning("NumPy version conflict detected - try: pip install 'numpy<2.0'")
+            logger.info("Falling back to basic heuristic analysis...")
+            # Enable a simple fallback analysis
+            self.enable_analysis = True
+            self.analysis_method = "basic"
             
         self._init_database()
         
         if self.enable_analysis:
-            logger.info(f"Analysis enabled: method={self.analysis_method}, batch_size={self.batch_size}, workers={self.workers}")
+            gpu_info = f"{self.num_gpus}x GPU" if self.num_gpus > 1 else "1x GPU" if self.num_gpus == 1 else "CPU"
+            logger.info(f"Analysis enabled: {gpu_info}, method={self.analysis_method}, batch_size={self.batch_size}, workers={self.workers}")
+            if not CLIP_AVAILABLE:
+                logger.error("Analysis enabled but required dependencies not available!")
+                logger.error("Install with: uv sync --group analysis")
+                self.enable_analysis = False
         else:
             logger.info("Analysis disabled")
         
@@ -234,15 +264,23 @@ class WildlifeDownloader:
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-                        if total_size > 0:
+                        if total_size > 0 and self.show_progress:
                             percent = (downloaded / total_size) * 100
-                            print(f"\rProgress: {percent:.1f}%", end='', flush=True)
+                            # Use proper progress display with carriage return cleanup
+                            progress_msg = f"\rProgress: {percent:.1f}% ({downloaded:,}/{total_size:,} bytes)"
+                            print(progress_msg, end='', flush=True)
             
-            print()  # New line after progress
+            # Important: Clear the progress line and add newline
+            if self.show_progress and total_size > 0:
+                print("\r" + " " * 80 + "\r", end='')  # Clear the line
+            print()  # Add proper newline
             logger.info(f"Downloaded: {filepath}")
             return True
             
         except Exception as e:
+            # Make sure we clear any partial progress line on error
+            print("\r" + " " * 80 + "\r", end='')
+            print()
             logger.error(f"Error downloading {filename}: {e}")
             return False
 
@@ -329,14 +367,17 @@ class WildlifeDownloader:
                         clip_paths.append(job['output_path'])
                     completed += 1
                     
-                    # Progress update
+                    # Progress update with proper terminal cleanup
                     progress = (completed / len(segment_jobs)) * 100
-                    print(f"\rSegmentation progress: {progress:.1f}% ({completed}/{len(segment_jobs)})", end='', flush=True)
+                    progress_msg = f"\rSegmentation progress: {progress:.1f}% ({completed}/{len(segment_jobs)})"
+                    print(progress_msg, end='', flush=True)
                     
                 except Exception as e:
                     logger.error(f"Error processing segment {job['segment_num']}: {e}")
         
-        print()  # New line after progress
+        # Clear progress line and add proper newline
+        print("\r" + " " * 80 + "\r", end='')
+        print()
         
         # Sort clips by segment number to maintain order
         clip_paths.sort(key=lambda p: int(p.stem.split('_')[-1]))
@@ -393,7 +434,24 @@ class WildlifeDownloader:
         # Batch analysis after all clips are created
         if self.enable_analysis and clips:
             logger.info(f"Starting batch analysis of {len(clips)} clips...")
-            self._batch_analyze_clips(clips)
+            try:
+                self._batch_analyze_clips(clips)
+                logger.info(f"Completed analysis of {len(clips)} clips")
+            except Exception as e:
+                logger.error(f"Error during batch analysis: {e}")
+                # Fallback to individual analysis
+                logger.info("Falling back to individual clip analysis...")
+                for clip_path in clips:
+                    try:
+                        analysis_results = self._analyze_clip_content(clip_path)
+                        if analysis_results:
+                            self._update_clip_analysis(clip_path, analysis_results)
+                    except Exception as e2:
+                        logger.error(f"Error analyzing {clip_path.name}: {e2}")
+        elif self.enable_analysis:
+            logger.warning("Analysis enabled but no clips to analyze")
+        else:
+            logger.info("Analysis disabled - skipping content analysis")
         
         metadata_path = clips[0].parent / "metadata.json"
         with open(metadata_path, 'w') as f:
@@ -886,6 +944,8 @@ def main():
                        help="Duration of each clip in seconds (default: 30)")
     parser.add_argument("--no-parallel", action="store_true", 
                        help="Disable parallel processing")
+    parser.add_argument("--no-progress", action="store_true",
+                       help="Disable progress bars (useful for remote servers)")
     parser.add_argument("--output-dir", "-o", default="wildlife_clips",
                        help="Output directory (default: wildlife_clips)")
     parser.add_argument("--analyze", action="store_true",
