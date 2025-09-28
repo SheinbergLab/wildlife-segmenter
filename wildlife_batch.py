@@ -13,11 +13,12 @@ import logging
 import sqlite3
 import tarfile
 import shutil
+import time
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import the main WildlifeDownloader class
 from wildlife_segmenter import WildlifeDownloader
@@ -61,9 +62,6 @@ class WildlifeBatchProcessor:
         self.default_items = [
             "Wildlife_Specials",
             "time-life-nature-video-library",
-            "prelinger",  # Contains nature documentaries
-            "opensource_movies",  # Contains some nature content
-            "feature_films",  # Some wildlife documentaries here
         ]
         
         logger.info(f"Batch processor initialized - output: {self.output_dir}")
@@ -129,8 +127,6 @@ class WildlifeBatchProcessor:
             if result.returncode == 0 and result.stdout.strip():
                 return float(result.stdout.strip())
             else:
-                # Fallback: estimate from file size (very rough)
-                # Assume ~1MB per minute for compressed wildlife documentaries
                 return 0.0
                 
         except Exception as e:
@@ -158,8 +154,8 @@ class WildlifeBatchProcessor:
         
         logger.info(f"Filtered {len(video_files)} videos down to {len(filtered_videos)} videos ≥{min_duration_minutes}min")
         return filtered_videos
-
-    def explore_item(self, item_id: str) -> Dict:    
+    
+    def explore_item(self, item_id: str) -> Dict:
         """Explore a specific item to see its contents"""
         logger.info(f"Exploring item: {item_id}")
         
@@ -201,7 +197,7 @@ class WildlifeBatchProcessor:
             json.dump(completion_data, f, indent=2)
     
     def process_single_item(self, item_id: str) -> Tuple[bool, Dict]:
-        """Process a single documentary item"""
+        """Process a single documentary item - downloads and processes ALL videos in the collection"""
         logger.info(f"Starting processing: {item_id}")
         
         start_time = time.time()
@@ -209,7 +205,7 @@ class WildlifeBatchProcessor:
             'item_id': item_id,
             'start_time': datetime.now().isoformat(),
             'clips_created': 0,
-            'clips_analyzed': 0,
+            'videos_processed': 0,
             'success': False,
             'error': None
         }
@@ -223,10 +219,9 @@ class WildlifeBatchProcessor:
         item_logger.setLevel(logging.INFO)
         
         try:
-            # Process the documentary
-            item_logger.info(f"Processing documentary: {item_id}")
+            item_logger.info(f"Processing documentary collection: {item_id}")
             
-            # Get video files first to estimate scope
+            # Get all video files in the collection
             video_files = self.downloader.get_video_files(item_id)
             if not video_files:
                 raise Exception(f"No video files found for {item_id}")
@@ -242,35 +237,46 @@ class WildlifeBatchProcessor:
             
             # Process each qualifying video
             total_clips = 0
-            for video_file in video_files:
+            videos_processed = 0
+            
+            for i, video_file in enumerate(video_files, 1):
                 try:
-                    item_logger.info(f"Processing video: {video_file['name']}")
+                    item_logger.info(f"Processing video {i}/{len(video_files)}: {video_file['name']}")
                     
-                    # Process individual video instead of using process_documentary
-                    # which only processes the first/largest file
+                    # Download the video
                     success = self.downloader.download_video(video_file['download_url'], video_file['name'])
                     if not success:
+                        item_logger.warning(f"Failed to download {video_file['name']}")
                         continue
                     
+                    # Segment the video into clips
                     video_path = self.output_dir / "downloads" / video_file['name']
                     if video_path.exists():
                         clips = self.downloader.segment_video(video_path, clip_duration=self.clip_duration, parallel=True)
                         if clips:
                             self.downloader.create_metadata_file(clips, video_file['name'], self.clip_duration, item_id)
                             total_clips += len(clips)
+                            videos_processed += 1
                             item_logger.info(f"Created {len(clips)} clips from {video_file['name']}")
+                        else:
+                            item_logger.warning(f"No clips created from {video_file['name']}")
+                    else:
+                        item_logger.warning(f"Video file not found after download: {video_path}")
                     
                 except Exception as e:
                     item_logger.warning(f"Failed to process {video_file['name']}: {e}")
                     continue
             
-            # Count created clips
+            if total_clips == 0:
+                raise Exception("No clips were created from any videos")
+            
             stats['clips_created'] = total_clips
+            stats['videos_processed'] = videos_processed
             stats['processing_time'] = time.time() - start_time
             stats['success'] = True
             
-            item_logger.info(f"Successfully processed {item_id}: {stats['clips_created']} clips created")
-            logger.info(f"✓ Completed {item_id}: {stats['clips_created']} clips in {stats['processing_time']:.1f}s")
+            item_logger.info(f"Successfully processed {item_id}: {videos_processed} videos, {total_clips} clips created")
+            logger.info(f"✓ Completed {item_id}: {videos_processed} videos, {total_clips} clips in {stats['processing_time']:.1f}s")
             
             return True, stats
             
@@ -627,7 +633,8 @@ def main():
         epilog="""
 Examples:
   %(prog)s                                    # Process default collections
-  %(prog)s Wildlife_Specials ArcticWildlife  # Process specific items
+  %(prog)s Wildlife_Specials                 # Process specific items
+  %(prog)s --min-duration 40 Wildlife_Specials  # Only videos 40+ minutes
   %(prog)s --no-analyze Wildlife_Specials    # Skip computer vision analysis
   %(prog)s --list                            # List available documentaries
   %(prog)s --explore Wildlife_Specials       # Explore specific item
