@@ -12,6 +12,9 @@ A Python tool for downloading wildlife documentaries from Internet Archive and a
 - **📊 TCL Integration**: Direct SQLite access for experimental trial configuration
 - **🔍 Smart Discovery**: Multiple fallback methods for finding wildlife content
 - **🚀 High Performance**: Batch processing optimized for GPU and multi-core systems
+- **📦 Batch Processing**: Process multiple collections with intelligent deduplication
+- **⏱️ Duration Filtering**: Automatically filter videos by minimum duration
+- **📋 Research Packaging**: Create timestamped archives for easy transfer
 
 ## Installation
 
@@ -59,7 +62,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 ## Quick Start
 
-### 1. Discover Available Content
+### Single Collection Processing
 
 ```bash
 # List available wildlife documentary collections
@@ -67,43 +70,30 @@ uv run wildlife_segmenter.py list
 
 # Explore specific collection contents
 uv run wildlife_segmenter.py explore Wildlife_Specials
-```
 
-### 2. Download and Process Videos
-
-```bash
-# Download and segment with 30-second clips (default)
-uv run wildlife_segmenter.py download Wildlife_Specials
-
-# With AI content analysis (recommended for research)
+# Download and process single collection
 uv run wildlife_segmenter.py download Wildlife_Specials --analyze
-
-# Custom clip duration (15 seconds for Instagram Reels)
-uv run wildlife_segmenter.py download Wildlife_Specials --clip-duration 15 --analyze
-
-# Download specific video from collection
-uv run wildlife_segmenter.py download Wildlife_Specials --file Eagle --analyze
 ```
 
-### 3. Database Management & Analysis
+### Batch Processing (Recommended for Research)
 
 ```bash
-# Scan existing clips into database
-uv run wildlife_segmenter.py scan
+# Process all videos in Wildlife_Specials with deduplication
+uv run wildlife_batch.py Wildlife_Specials
 
-# Scan with AI content analysis
-uv run wildlife_segmenter.py scan --analyze
+# Process only full-length documentaries (40+ minutes)
+uv run wildlife_batch.py --min-duration 40 Wildlife_Specials
 
-# Query database contents
-uv run wildlife_segmenter.py query
+# Process multiple collections with custom settings
+uv run wildlife_batch.py --min-duration 30 --jobs 4 Wildlife_Specials time-life-nature-video-library
 
-# Export for analysis
-uv run wildlife_segmenter.py export
+# Explore collections before processing
+uv run wildlife_batch.py --explore Wildlife_Specials
 ```
 
 ## Command Reference
 
-### Core Commands
+### Single Collection Commands (wildlife_segmenter.py)
 
 | Command | Description | Example |
 |---------|-------------|---------|
@@ -115,7 +105,18 @@ uv run wildlife_segmenter.py export
 | `query` | Show database contents | `uv run wildlife_segmenter.py query` |
 | `export` | Export database for analysis | `uv run wildlife_segmenter.py export` |
 
+### Batch Processing Commands (wildlife_batch.py)
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `<collection>` | Process entire collection | `uv run wildlife_batch.py Wildlife_Specials` |
+| `--list` | Show available collections | `uv run wildlife_batch.py --list` |
+| `--explore <collection>` | View collection contents | `uv run wildlife_batch.py --explore Wildlife_Specials` |
+| `--resume` | Resume previous batch job | `uv run wildlife_batch.py --resume` |
+
 ### Options
+
+#### Single Collection Options
 
 | Option | Short | Description | Example |
 |--------|--------|-------------|---------|
@@ -124,43 +125,147 @@ uv run wildlife_segmenter.py export
 | `--output-dir` | `-o` | Output directory | `-o /path/to/clips` |
 | `--no-parallel` | | Disable parallel processing | `--no-parallel` |
 | `--analyze` | | Enable AI content analysis | `--analyze` |
-| `--analysis-batch-size` | | Batch size for GPU processing (0=auto) | `--analysis-batch-size 16` |
-| `--analysis-workers` | | Number of CPU workers (0=auto) | `--analysis-workers 8` |
+
+#### Batch Processing Options
+
+| Option | Short | Description | Example |
+|--------|--------|-------------|---------|
+| `--min-duration` | | Minimum video duration in minutes | `--min-duration 40` |
+| `--duration` | `-d` | Clip length in seconds (default: 30) | `-d 45` |
+| `--jobs` | `-j` | Number of parallel jobs (default: 2) | `-j 4` |
+| `--output` | `-o` | Output directory | `-o /data/wildlife` |
+| `--no-analyze` | | Skip AI content analysis | `--no-analyze` |
+| `--no-package` | | Skip creating tar.gz package | `--no-package` |
+
+## Batch Processing Workflows
+
+The batch processor (`wildlife_batch.py`) is designed for large-scale research data collection and includes several intelligent features:
+
+### Key Features
+
+- **Intelligent Deduplication**: Automatically detects and removes duplicate videos in different formats (e.g., keeps `Eagle.mp4` and removes `Eagle.avi`)
+- **Duration Filtering**: Filter videos by minimum duration to focus on full documentaries
+- **Parallel Collection Processing**: Process multiple collections simultaneously
+- **Research Packaging**: Creates timestamped tar.gz archives for easy data transfer
+- **Resume Capability**: Continue interrupted batch jobs
+- **Comprehensive Logging**: Detailed logs for debugging and progress tracking
+
+### Research-Ready Examples
+
+**Process all major wildlife collections:**
+```bash
+# Process all default collections (will take several hours)
+uv run wildlife_batch.py
+
+# Process specific collections with 45-minute minimum duration
+uv run wildlife_batch.py --min-duration 45 Wildlife_Specials time-life-nature-video-library
+
+# High-performance setup for compute servers (4 parallel jobs)
+uv run wildlife_batch.py --jobs 4 --min-duration 30 Wildlife_Specials
+```
+
+**Content-specific workflows:**
+```bash
+# Full-length documentaries only (removes short clips/previews)
+uv run wildlife_batch.py --min-duration 40 Wildlife_Specials
+
+# Quick processing without AI analysis (faster)
+uv run wildlife_batch.py --no-analyze Wildlife_Specials
+
+# Instagram Reel length clips (15 seconds)
+uv run wildlife_batch.py --duration 15 Wildlife_Specials
+```
+
+**Research packaging:**
+```bash
+# Process with automatic packaging for transfer
+uv run wildlife_batch.py --min-duration 30 Wildlife_Specials
+
+# Result: wildlife_analysis_20241028_143022.tar.gz
+# Contains: clips/, database, logs, and analysis summary
+```
+
+### Batch Processing Output
+
+The batch processor creates organized output with research-ready packaging:
+
+```
+wildlife_analysis_20241028_143022.tar.gz
+├── clips/                          # All video clips organized by source
+│   ├── Eagle/
+│   │   ├── Eagle_clip_000.mp4
+│   │   └── ...
+│   ├── Crocodile/
+│   └── ...
+├── clips_database.db              # Complete SQLite database
+├── clips_summary.csv              # Human-readable summary
+├── analysis_summary.json          # Detailed statistics
+├── README.txt                     # Human-readable summary
+└── logs/                          # Processing logs
+    ├── batch_process.log
+    ├── Wildlife_Specials.log
+    └── ...
+```
+
+### Smart Deduplication Example
+
+Many Internet Archive collections contain the same video in multiple formats:
+
+**Before deduplication:**
+```
+Eagle.avi (700MB)
+Eagle.mp4 (286MB)
+Crocodile.avi (698MB)
+Crocodile.mp4 (285MB)
+```
+
+**After deduplication:**
+```
+Eagle.mp4 (286MB) - kept (better format)
+Crocodile.mp4 (285MB) - kept (better format)
+```
+
+The system intelligently chooses the best version based on:
+- Format preference: MP4 > AVI > MOV > MKV
+- File size optimization for documentaries (200-800MB range preferred)
 
 ## Usage Examples
 
 ### Research Workflows
 
-**TikTok-length clips with AI analysis:**
+**Social media research (TikTok/Instagram):**
 ```bash
-uv run wildlife_segmenter.py download Wildlife_Specials -d 30 --analyze
-```
-
-**Instagram Reels with content detection:**
-```bash
-uv run wildlife_segmenter.py download Wildlife_Specials -d 15 --analyze
-```
-
-**YouTube Shorts with GPU acceleration:**
-```bash
-uv run wildlife_segmenter.py download Wildlife_Specials -d 60 --analyze --analysis-batch-size 16
+uv run wildlife_batch.py --duration 30 --min-duration 40 Wildlife_Specials
 ```
 
 **Micro-moment analysis:**
 ```bash
-uv run wildlife_segmenter.py download Wildlife_Specials -d 5 --analyze
+uv run wildlife_batch.py --duration 5 --min-duration 20 Wildlife_Specials
 ```
 
-### Batch Processing
-
+**Cross-platform comparison:**
 ```bash
-# Download multiple collections with AI analysis
-uv run wildlife_segmenter.py download WildlifeDocumentaries -d 30 --analyze
-uv run wildlife_segmenter.py download Wildlife_Nature_Documentaries -d 30 --analyze
-uv run wildlife_segmenter.py download time-life-nature-video-library -d 30 --analyze
+# Create different clip lengths for platform comparison
+uv run wildlife_batch.py --duration 15 --output wildlife_15s Wildlife_Specials
+uv run wildlife_batch.py --duration 30 --output wildlife_30s Wildlife_Specials
+uv run wildlife_batch.py --duration 60 --output wildlife_60s Wildlife_Specials
+```
 
-# Index everything
-uv run wildlife_segmenter.py scan --analyze
+### High-Performance Compute Setup
+
+**Cloud/HPC batch processing:**
+```bash
+# Process multiple collections simultaneously
+uv run wildlife_batch.py --jobs 8 --min-duration 30 \
+  Wildlife_Specials time-life-nature-video-library &
+
+# Monitor with nvidia-smi for GPU utilization during AI analysis
+```
+
+**Resume interrupted jobs:**
+```bash
+# If processing was interrupted, resume from where it left off
+uv run wildlife_batch.py --resume Wildlife_Specials
 ```
 
 ## AI Content Analysis
@@ -458,14 +563,7 @@ Optimized for spot compute instances:
 git clone your-repo && cd wildlife-segmenter && uv sync --group analysis
 
 # Batch download multiple collections with GPU analysis
-for collection in WildlifeDocumentaries Wildlife_Specials Wildlife_Nature_Documentaries; do
-    uv run wildlife_segmenter.py download $collection -d 30 --analyze &
-done
-wait
-
-# Index everything and export for TCL
-uv run wildlife_segmenter.py scan --analyze
-uv run wildlife_segmenter.py export
+uv run wildlife_batch.py --jobs 4 --min-duration 30 Wildlife_Specials time-life-nature-video-library
 ```
 
 ## Contributing
@@ -505,7 +603,7 @@ uv run wildlife_segmenter.py scan
 ```
 
 **Download failures:**
-- Check internet connection
+- Check network connection
 - Verify collection ID with `explore` command
 - Some collections may be temporarily unavailable
 
@@ -536,5 +634,5 @@ uv run wildlife_segmenter.py download Wildlife_Specials --analyze --analysis-wor
 ### Getting Help
 
 - Open an issue on GitHub for bugs or feature requests
-- Check the command help: `uv run wildlife_segmenter.py --help`
+- Check the command help: `uv run wildlife_segmenter.py --help` or `uv run wildlife_batch.py --help`
 - Review the database with: `uv run wildlife_segmenter.py query`
