@@ -879,6 +879,8 @@ def main():
                        help="Duration of each clip in seconds (default: 30)")
     parser.add_argument("--no-parallel", action="store_true", 
                        help="Disable parallel processing")
+    parser.add_argument("--output-dir", "-o", default="wildlife_clips",
+                       help="Output directory (default: wildlife_clips)")
     parser.add_argument("--analyze", action="store_true",
                        help="Automatically analyze clips for content keywords")
     parser.add_argument("--analysis-method", choices=["clip", "yolo", "google"], default="clip",
