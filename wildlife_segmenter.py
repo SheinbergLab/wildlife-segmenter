@@ -148,7 +148,7 @@ class WildlifeDownloader:
             logger.info(f"Loading model on {self.device}...")
             
             import torchvision.models as models
-            model = models.resnet50(pretrained=True)
+            model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
             model.eval()
             model = model.to(self.device)
             
@@ -663,6 +663,7 @@ class WildlifeDownloader:
             return 0
         
         total_added = 0
+        all_clips = []
         
         for video_dir in clips_dir.iterdir():
             if not video_dir.is_dir():
@@ -681,11 +682,14 @@ class WildlifeDownloader:
                     )
                     
                     if analyze and self.enable_analysis:
-                        results = self._analyze_clip_content(clip_path)
-                        if results:
-                            self._update_clip_analysis(clip_path, results)
+                        all_clips.append(clip_path)
                     
                     total_added += 1
+        
+        # Run batch analysis if requested
+        if analyze and self.enable_analysis and all_clips:
+            logger.info(f"Starting batch analysis of {len(all_clips)} clips...")
+            self._batch_analyze_clips(all_clips)
         
         logger.info(f"Scanned {total_added} clips")
         return total_added
@@ -740,6 +744,7 @@ def _create_clip_worker(job: Dict) -> bool:
         return True
     except subprocess.CalledProcessError:
         return False
+
 
 def main():
     parser = argparse.ArgumentParser(description="Wildlife Documentary Downloader & Segmenter")
