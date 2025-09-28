@@ -56,14 +56,13 @@ class WildlifeBatchProcessor:
             show_progress=True
         )
         
-        # Default wildlife collections to process
+        # Default wildlife collections to process (real Internet Archive IDs)
         self.default_items = [
             "Wildlife_Specials",
-            "AfricaDocumentary", 
-            "ArcticWildlife",
-            "OceanDocumentaries",
-            "BirdDocumentaries",
-            "time-life-nature-video-library"
+            "time-life-nature-video-library",
+            "prelinger",  # Contains nature documentaries
+            "opensource_movies",  # Contains some nature content
+            "feature_films",  # Some wildlife documentaries here
         ]
         
         logger.info(f"Batch processor initialized - output: {self.output_dir}")
