@@ -133,7 +133,92 @@ class WildlifeBatchProcessor:
             logger.debug(f"Could not get duration for {download_url}: {e}")
             return 0.0
 
-    def filter_videos_by_duration(self, video_files: List[Dict], min_duration_minutes: float = 40) -> List[Dict]:
+    def deduplicate_videos(self, video_files: List[Dict]) -> List[Dict]:
+        """Remove duplicate videos with different formats, keeping the best version"""
+        if len(video_files) <= 1:
+            return video_files
+        
+        logger.info("Deduplicating videos with same content in different formats...")
+        
+        # Group videos by base filename (without extension)
+        grouped_videos = {}
+        for video in video_files:
+            # Extract base name without extension
+            base_name = Path(video['name']).stem
+            if base_name not in grouped_videos:
+                grouped_videos[base_name] = []
+            grouped_videos[base_name].append(video)
+        
+        deduplicated = []
+        for base_name, videos in grouped_videos.items():
+            if len(videos) == 1:
+                # Only one version, keep it
+                deduplicated.append(videos[0])
+            else:
+                # Multiple versions - choose the best one
+                best_video = self._select_best_video(videos)
+                deduplicated.append(best_video)
+                
+                # Log what we're keeping vs skipping
+                kept_name = best_video['name']
+                skipped_names = [v['name'] for v in videos if v['name'] != kept_name]
+                logger.info(f"Keeping {kept_name}, skipping duplicates: {', '.join(skipped_names)}")
+        
+        original_count = len(video_files)
+        final_count = len(deduplicated)
+        logger.info(f"Deduplicated {original_count} videos down to {final_count} unique videos")
+        
+        return deduplicated
+    
+    def _select_best_video(self, videos: List[Dict]) -> Dict:
+        """Select the best video from duplicates based on format and size preferences"""
+        
+        # Preference order for formats (most preferred first)
+        format_preferences = {
+            '.mp4': 100,   # Most compatible, good compression
+            '.avi': 90,    # Good quality, larger files
+            '.mov': 80,    # Apple format, good quality
+            '.mkv': 70,    # Good for high quality but less compatible
+            '.wmv': 60,    # Windows format
+            '.flv': 50,    # Flash video, older format
+        }
+        
+        def score_video(video):
+            """Score a video based on format preference and file size"""
+            name = video['name'].lower()
+            size = int(video.get('size', 0))
+            
+            # Format score
+            format_score = 0
+            for ext, score in format_preferences.items():
+                if name.endswith(ext):
+                    format_score = score
+                    break
+            
+            # Size score (prefer larger files within reason, but not excessively large)
+            # Normalize size to MB for scoring
+            size_mb = size / (1024 * 1024)
+            
+            # Prefer files in the 200-800MB range (good quality documentaries)
+            if 200 <= size_mb <= 800:
+                size_score = 50
+            elif 100 <= size_mb < 200:
+                size_score = 40  # A bit small but acceptable
+            elif 800 < size_mb <= 1200:
+                size_score = 45  # Large but reasonable
+            elif size_mb > 1200:
+                size_score = 30  # Very large, might be uncompressed
+            else:
+                size_score = 20  # Very small, probably low quality
+            
+            total_score = format_score + size_score
+            
+            logger.debug(f"{name}: format={format_score}, size={size_score}MB, total={total_score}")
+            return total_score
+        
+        # Score all videos and return the best one
+        best_video = max(videos, key=score_video)
+        return best_video
         """Filter video files by minimum duration"""
         if min_duration_minutes <= 0:
             return video_files
@@ -227,6 +312,10 @@ class WildlifeBatchProcessor:
                 raise Exception(f"No video files found for {item_id}")
             
             item_logger.info(f"Found {len(video_files)} video files")
+            
+            # Deduplicate videos with same content in different formats
+            video_files = self.deduplicate_videos(video_files)
+            item_logger.info(f"After deduplication: {len(video_files)} unique videos")
             
             # Filter by duration if specified
             if self.min_video_duration > 0:
