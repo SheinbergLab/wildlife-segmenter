@@ -34,13 +34,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class WildlifeDownloader:
-    def __init__(self, output_dir: str = "wildlife_clips", enable_analysis: bool = False, analysis_method: str = "clip"):
+    def __init__(self, output_dir: str = "wildlife_clips", enable_analysis: bool = False, analysis_method: str = "clip", batch_size: int = 0, workers: int = 0):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.base_url = "https://archive.org"
         self.db_path = self.output_dir / "clips_database.db"
         self.enable_analysis = enable_analysis
         self.analysis_method = analysis_method
+        self.batch_size = batch_size if batch_size > 0 else (16 if enable_analysis else 4)
+        self.workers = workers if workers > 0 else (min(mp.cpu_count(), 8) if enable_analysis else mp.cpu_count())
         
         # Initialize CLIP model if analysis is enabled
         self.clip_model = None
@@ -48,10 +50,15 @@ class WildlifeDownloader:
         if self.enable_analysis and CLIP_AVAILABLE:
             self._init_clip_model()
         elif self.enable_analysis and not CLIP_AVAILABLE:
-            logger.warning("Analysis requested but CLIP dependencies not available. Install with: pip install torch torchvision clip-by-openai pillow opencv-python")
+            logger.warning("Analysis requested but CLIP dependencies not available. Install with: uv sync --group analysis")
             self.enable_analysis = False
             
         self._init_database()
+        
+        if self.enable_analysis:
+            logger.info(f"Analysis enabled: method={self.analysis_method}, batch_size={self.batch_size}, workers={self.workers}")
+        else:
+            logger.info("Analysis disabled")
         
     def _init_clip_model(self):
         """Initialize CLIP model for content analysis"""
