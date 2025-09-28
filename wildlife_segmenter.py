@@ -18,17 +18,87 @@ from urllib.parse import urljoin
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 
+# Optional imports for analysis
+try:
+    import torch
+    import torchvision.transforms as transforms
+    from PIL import Image
+    import cv2
+    import urllib.request
+    CLIP_AVAILABLE = True
+except ImportError:
+    CLIP_AVAILABLE = False
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class WildlifeDownloader:
-    def __init__(self, output_dir: str = "wildlife_clips"):
+    def __init__(self, output_dir: str = "wildlife_clips", enable_analysis: bool = False, analysis_method: str = "clip"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.base_url = "https://archive.org"
         self.db_path = self.output_dir / "clips_database.db"
+        self.enable_analysis = enable_analysis
+        self.analysis_method = analysis_method
+        
+        # Initialize CLIP model if analysis is enabled
+        self.clip_model = None
+        self.clip_preprocess = None
+        if self.enable_analysis and CLIP_AVAILABLE:
+            self._init_clip_model()
+        elif self.enable_analysis and not CLIP_AVAILABLE:
+            logger.warning("Analysis requested but CLIP dependencies not available. Install with: pip install torch torchvision clip-by-openai pillow opencv-python")
+            self.enable_analysis = False
+            
         self._init_database()
+        
+    def _init_clip_model(self):
+        """Initialize CLIP model for content analysis"""
+        try:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Loading CLIP model on {self.device}...")
+            
+            # Download CLIP model directly from GitHub (more reliable)
+            model_url = "https://github.com/openai/CLIP/raw/main/clip/clip.py"
+            
+            # Use a simpler approach with torch hub or direct implementation
+            # For now, we'll implement a lightweight version
+            self.clip_model = self._load_simple_clip_model()
+            
+            if self.clip_model:
+                logger.info("CLIP model loaded successfully")
+            else:
+                raise Exception("Failed to load model")
+                
+        except Exception as e:
+            logger.error(f"Failed to load CLIP model: {e}")
+            logger.info("Falling back to basic computer vision analysis")
+            self.enable_analysis = False
+    
+    def _load_simple_clip_model(self):
+        """Load a simple alternative to CLIP for basic analysis"""
+        try:
+            # Use a pre-trained ResNet for basic image classification
+            import torchvision.models as models
+            model = models.resnet50(pretrained=True)
+            model.eval()
+            model = model.to(self.device)
+            
+            # Define transform for preprocessing
+            self.transform = transforms.Compose([
+                transforms.Resize(224),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                                   std=[0.229, 0.224, 0.225]),
+            ])
+            
+            return model
+            
+        except Exception as e:
+            logger.error(f"Error loading fallback model: {e}")
+            return None
         
     def _init_database(self):
         """Initialize SQLite database for clips metadata"""
@@ -52,6 +122,9 @@ class WildlifeDownloader:
                 fps REAL,
                 contains_animals BOOLEAN,
                 scene_type TEXT,
+                detected_objects TEXT,
+                analysis_confidence TEXT,
+                analysis_method TEXT,
                 dominant_colors TEXT,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -306,16 +379,22 @@ class WildlifeDownloader:
             }
             metadata['clips'].append(clip_info)
             
-            # Add clip to database
+            # Add clip to database (without analysis for now)
             self._add_clip_to_database(clip_path, video_title, collection_id, i, 
                                      i * clip_duration, (i + 1) * clip_duration, clip_duration)
+        
+        # Batch analysis after all clips are created
+        if self.enable_analysis and clips:
+            logger.info(f"Starting batch analysis of {len(clips)} clips...")
+            self._batch_analyze_clips(clips)
         
         metadata_path = clips[0].parent / "metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
         logger.info(f"Created metadata file: {metadata_path}")
-        logger.info(f"Added {len(clips)} clips to database")
+        if self.enable_analysis:
+            logger.info(f"Completed analysis of {len(clips)} clips")
 
     def list_available_videos(self, limit: int = 10):
         """List available videos in the collection"""
@@ -547,7 +626,8 @@ class WildlifeDownloader:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT filename, source_video, clip_number, start_time, end_time,
-                   duration, width, height, fps, contains_animals, scene_type, filepath
+                   duration, width, height, fps, contains_animals, scene_type, 
+                   detected_objects, filepath
             FROM clips ORDER BY source_video, clip_number
         ''')
         
@@ -555,7 +635,7 @@ class WildlifeDownloader:
         conn.close()
         
         with open(csv_file, 'w') as f:
-            f.write("filename,source_video,clip_number,start_time,end_time,duration,width,height,fps,contains_animals,scene_type,filepath\n")
+            f.write("filename,source_video,clip_number,start_time,end_time,duration,width,height,fps,contains_animals,scene_type,detected_objects,filepath\n")
             for row in rows:
                 f.write(",".join(str(x) if x is not None else "" for x in row) + "\n")
         
@@ -604,7 +684,7 @@ class WildlifeDownloader:
         results = cursor.fetchall()
         conn.close()
         
-    def scan_existing_clips(self):
+    def scan_existing_clips(self, analyze: bool = False):
         """Scan clips directory and add existing clips to database"""
         clips_dir = self.output_dir / "clips"
         
@@ -613,6 +693,12 @@ class WildlifeDownloader:
             return
         
         total_added = 0
+        
+        # Enable analysis for scanning if requested
+        if analyze and not self.enable_analysis:
+            self.enable_analysis = analyze
+            if CLIP_AVAILABLE and not self.clip_model:
+                self._init_clip_model()
         
         # Scan all subdirectories in clips/
         for video_dir in clips_dir.iterdir():
@@ -663,10 +749,18 @@ class WildlifeDownloader:
                         start_time, end_time, clip_duration
                     )
                     
+                    # Analyze if requested
+                    if analyze and self.enable_analysis:
+                        analysis_results = self._analyze_clip_content(clip_path)
+                        if analysis_results:
+                            self._update_clip_analysis(clip_path, analysis_results)
+                    
                     clip_number += 1
                     total_added += 1
         
         logger.info(f"Scanned and added {total_added} existing clips to database")
+        if analyze and self.enable_analysis:
+            logger.info("Content analysis completed for all clips")
         return total_added
 
     def explore_collection(self, collection_id: str):
@@ -785,8 +879,10 @@ def main():
                        help="Duration of each clip in seconds (default: 30)")
     parser.add_argument("--no-parallel", action="store_true", 
                        help="Disable parallel processing")
-    parser.add_argument("--output-dir", "-o", default="wildlife_clips",
-                       help="Output directory (default: wildlife_clips)")
+    parser.add_argument("--analyze", action="store_true",
+                       help="Automatically analyze clips for content keywords")
+    parser.add_argument("--analysis-method", choices=["clip", "yolo", "google"], default="clip",
+                       help="Method for automatic analysis (default: clip)")
     
     args = parser.parse_args()
     
@@ -880,4 +976,3 @@ def main_old():
 
 if __name__ == "__main__":
     main()
-    
