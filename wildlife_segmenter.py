@@ -64,8 +64,12 @@ class WildlifeDownloader:
         self.analysis_method = analysis_method
         self.show_progress = show_progress
         
-        # Auto-detect GPU capabilities and scale accordingly
-        self.num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        # Auto-detect GPU capabilities and scale accordingly  
+        try:
+            import torch as torch_module
+            self.num_gpus = torch_module.cuda.device_count() if torch_module.cuda.is_available() else 0
+        except ImportError:
+            self.num_gpus = 0
         
         # Aggressive scaling for A6000 class GPUs (48GB each)
         if self.num_gpus >= 4:
