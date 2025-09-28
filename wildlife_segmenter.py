@@ -95,6 +95,7 @@ class WildlifeDownloader:
         self.clip_preprocess = None
         if self.enable_analysis:
             if CLIP_AVAILABLE:
+                logger.info("CLIP dependencies available - initializing model...")
                 self._init_clip_model()
             else:
                 logger.warning("Analysis requested but some dependencies not available")
@@ -103,19 +104,19 @@ class WildlifeDownloader:
                 # Check each import individually
                 missing_deps = []
                 try:
-                    import torch
-                    logger.info(f"✓ PyTorch {torch.__version__} available")
+                    import torch as torch_check
+                    logger.info(f"✓ PyTorch {torch_check.__version__} available")
                 except ImportError:
                     missing_deps.append("torch")
                     
                 try:
-                    import cv2
+                    import cv2 as cv2_check
                     logger.info("✓ OpenCV available")
                 except ImportError:
                     missing_deps.append("opencv-python")
                     
                 try:
-                    from PIL import Image
+                    from PIL import Image as pil_check
                     logger.info("✓ PIL available")
                 except ImportError:
                     missing_deps.append("pillow")
@@ -140,6 +141,9 @@ class WildlifeDownloader:
                         self.enable_analysis = False
             
         self._init_database()
+        
+        # Debug: show what CLIP_AVAILABLE is set to
+        logger.info(f"CLIP_AVAILABLE = {CLIP_AVAILABLE}")
         
         if self.enable_analysis:
             gpu_info = f"{self.num_gpus}x GPU" if self.num_gpus > 1 else "1x GPU" if self.num_gpus == 1 else "CPU"
