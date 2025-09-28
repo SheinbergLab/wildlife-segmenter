@@ -9,8 +9,7 @@ import os
 import sys
 import json
 import argparse
-import logging
-import sqlite3
+import loggingimport sqlite3
 import tarfile
 import shutil
 from pathlib import Path
@@ -158,6 +157,8 @@ class WildlifeBatchProcessor:
         
         logger.info(f"Filtered {len(video_files)} videos down to {len(filtered_videos)} videos ≥{min_duration_minutes}min")
         return filtered_videos
+        
+    def explore_item(self, item_id: str) -> Dict:    
         """Explore a specific item to see its contents"""
         logger.info(f"Exploring item: {item_id}")
         
@@ -262,16 +263,7 @@ class WildlifeBatchProcessor:
                     item_logger.warning(f"Failed to process {video_file['name']}: {e}")
                     continue
             
-            # Count created clips
-            clips_dir = self.output_dir / "clips"
-            total_clips = 0
-            for video_dir in clips_dir.iterdir():
-                if video_dir.is_dir():
-                    # Check if this directory might be from our current processing
-                    item_clips = list(video_dir.glob("*.mp4"))
-                    # Simple heuristic: assume recent clips are from this processing
-                    total_clips += len(item_clips)
-            
+            # Count created clips            
             stats['clips_created'] = total_clips
             stats['processing_time'] = time.time() - start_time
             stats['success'] = True
