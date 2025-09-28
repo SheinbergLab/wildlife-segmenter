@@ -56,6 +56,9 @@ logger = logging.getLogger(__name__)
 
 class WildlifeDownloader:
     def __init__(self, output_dir: str = "wildlife_clips", enable_analysis: bool = False, analysis_method: str = "clip", batch_size: int = 0, workers: int = 0, show_progress: bool = True):
+        # Debug: show what parameters we received
+        logger.info(f"WildlifeDownloader init - enable_analysis: {enable_analysis}")
+        
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.base_url = "https://archive.org"
