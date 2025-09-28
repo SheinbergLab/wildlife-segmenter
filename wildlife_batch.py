@@ -9,7 +9,8 @@ import os
 import sys
 import json
 import argparse
-import loggingimport sqlite3
+import loggingimport
+import sqlite3
 import tarfile
 import shutil
 from pathlib import Path
